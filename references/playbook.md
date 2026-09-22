@@ -82,6 +82,34 @@ orca terminal send --terminal <handle> --text $'\r' --json
 
 最後一個非 keepalive JSON 才是結果。不要用 `grep -v _keepalive`：結果 message 的 body 可能合法含有字串 `_keepalive`。應逐個 JSON 物件 `raw_decode`，只丟掉根物件 `obj.get("_keepalive") is true` 的物件。`scripts/orca-wait.sh` 已封裝這個行為並保存完整 stdout。
 
+## 訊息通道三個實測坑（2026-09-22）
+
+同一輪協作裡三個都踩到，每個都讓 operator 以為「沒消息＝沒事」。
+
+**1. `send --to run:<id>` 回 `ok: true` 但對方收不到。** worker 明確回報 `check` 與 `inbox` 都是空的。
+同一段內容改用 `reply --id <msg_id>` 送就到了。**`ok` 只證明送出成功，不證明送達。**
+operator 對 worker 的指示一律用 `reply`；要主動開話題就先讓對方送一則 status 再回覆它。
+
+**2. 長訊息會被截斷，而且對方不會說。** 一則含四個編號要點的回覆，worker 只收到第 3、4 點，
+自己送 typed question 問「第 1、2 點是什麼」才暴露。**指示寫短、一則一個主題**；
+內容多就落檔案、訊息只帶路徑。
+
+**3. 等待器只看席位狀態會漏接 typed question。** `worker_done,escalation` 不含 `question`，
+worker 問了十分鐘沒人回，自己選了保守做法繼續。**掛等待一律含 `question`**
+（`--types worker_done,escalation,question`），並在任務書寫明「operator 會盯訊息，請等回覆」。
+
+## 砍掉等待器的客戶端不會註銷伺服器端的等待者
+
+`pkill` 掉跑著 `check --wait` 的程序之後，新的等待器會被 `waiter_exists` 拒絕：
+`Run <id> already has an active actionable waiter`。伺服器端的註冊要等原本的 `--timeout-ms`
+到期才釋放，設了 55 分鐘就是擋 55 分鐘。
+
+繞法是**不帶 `--wait` 的輪詢**：`check --peek --types ...` 不註冊等待者，包成
+`until ... ; do sleep 60; done` 的背景任務，效果一樣而且可以隨時重起。
+
+連帶紀律：**Bash 背景任務要用 harness 的 `run_in_background`，不要 `nohup ... &`**。
+後者 harness 追蹤不到，跑完不會通知，等於掛了一個永遠不會叫醒你的把手。
+
 ## 巢狀關閉與 B 路線
 
 預設 `nestedWorkerMaxDepth=1` 時，Run 0 worker 不能再啟動 depth 2 worker。不要偷偷改全域設定。B 路線：orchestrator 用 `terminal create` 開席、`terminal send` 注入任務書；下層用：
