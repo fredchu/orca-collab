@@ -136,3 +136,20 @@ def test_preflight_quota_deny_fails(tmp_path):
     assert result.returncode == 1
     assert "FAIL quota: provider=claude bucket=test_window used_pct=42 decision=deny" in result.stdout
     assert "FAIL quota: provider=codex bucket=test_window used_pct=42 decision=deny" in result.stdout
+
+
+def test_preflight_prefers_cc_quota_over_agent_orch(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    env = _preflight_env(tmp_path, "deny")  # agent-orch 會回 deny；有 cc-quota 就不該用到它
+    _write_executable(
+        tmp_path / "bin" / "cc-quota",
+        '''#!/bin/sh
+printf '{"source":"orca","bucket":"weekly","used_pct":61,"decision":"allow"}\\n'
+''',
+    )
+    result = subprocess.run(["bash", str(PREFLIGHT), "--repo", str(repo)], capture_output=True, text=True, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PASS quota: provider=claude bucket=weekly used_pct=61 decision=allow" in result.stdout
+    assert "PASS quota: provider=codex bucket=weekly used_pct=61 decision=allow" in result.stdout

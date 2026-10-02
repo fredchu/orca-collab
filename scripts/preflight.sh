@@ -63,11 +63,20 @@ else
   fail "pi command not found"
 fi
 
-if command -v agent-orch >/dev/null 2>&1; then
+# cc-quota＝agent-orch quota gate 與 orca account list 互為替代；沒有才直接用 agent-orch。
+if command -v cc-quota >/dev/null 2>&1; then
+  quota_cmd=(cc-quota --provider)
+elif command -v agent-orch >/dev/null 2>&1; then
+  quota_cmd=(agent-orch quota check --provider)
+else
+  quota_cmd=()
+fi
+
+if ((${#quota_cmd[@]})); then
   for provider in claude codex; do
     quota_out=$(mktemp)
     quota_err=$(mktemp)
-    agent-orch quota check --provider "$provider" >"$quota_out" 2>"$quota_err"
+    "${quota_cmd[@]}" "$provider" >"$quota_out" 2>"$quota_err"
     quota_rc=$?
     quota_fields=$(python3 - "$quota_out" "$provider" <<'PY'
 import json
@@ -101,8 +110,8 @@ PY
     rm -f "$quota_out" "$quota_err"
   done
 else
-  skip "quota claude: agent-orch not found"
-  skip "quota codex: agent-orch not found"
+  skip "quota claude: cc-quota/agent-orch not found"
+  skip "quota codex: cc-quota/agent-orch not found"
 fi
 
 ((failures == 0))
